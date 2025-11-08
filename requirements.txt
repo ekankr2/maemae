@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+requests
+websocket-client
+pyyaml
+pandas
+python-dotenv

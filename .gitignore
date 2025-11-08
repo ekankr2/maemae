@@ -1,2 +1,22 @@
 /.idea/
 /.venv/
+
+# 한국투자증권 API 설정 파일 (개인정보 포함)
+kis_devlp.yaml
+
+# 토큰 파일
+config/
+*.dat
+
+# 환경 변수 파일
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 로그 파일
+*.log
