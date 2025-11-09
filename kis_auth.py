@@ -29,6 +29,9 @@ from Crypto.Cipher import AES
 # pip install pycryptodome
 from Crypto.Util.Padding import unpad
 
+# Pydantic Settings로 환경 변수 관리
+from settings import settings
+
 clearConsole = lambda: os.system("cls" if os.name in ("nt", "dos") else "clear")
 
 key_bytes = 32
@@ -44,11 +47,34 @@ token_tmp = os.path.join(
 if os.path.exists(token_tmp) == False:
     f = open(token_tmp, "w+")
 
-# 앱키, 앱시크리트, 토큰, 계좌번호 등 저장관리, 자신만의 경로와 파일명으로 설정하시기 바랍니다.
-# pip install PyYAML (패키지설치)
-yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kis_devlp.yaml")
-with open(yaml_path, encoding="UTF-8") as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+# Pydantic Settings에서 환경 변수 읽기
+# .env 파일이 없거나 필수 값 누락시 서버 시작 시 에러 발생
+_cfg = {
+    "my_app": settings.real_app if settings.real_app else settings.paper_app,
+    "my_sec": settings.real_sec if settings.real_sec else settings.paper_sec,
+    "my_acct": settings.my_real_stock if settings.my_real_stock else settings.my_paper_stock,
+    "my_prod": settings.my_prod,
+    "my_htsid": settings.my_htsid,
+    "my_agent": "Mozilla/5.0",
+    "my_real_app": settings.real_app,
+    "my_real_sec": settings.real_sec,
+    "my_real_acct": settings.my_real_stock,
+    "my_paper_app": settings.paper_app,
+    "my_paper_sec": settings.paper_sec,
+    "my_paper_acct": settings.my_paper_stock,
+    "paper_app": settings.paper_app,
+    "paper_sec": settings.paper_sec,
+    "my_paper_stock": settings.my_paper_stock,
+    "real_app": settings.real_app,
+    "real_sec": settings.real_sec,
+    "my_real_stock": settings.my_real_stock,
+    "domain_prod": settings.domain_prod,
+    "domain_vps": settings.domain_vps,
+    "prod": settings.domain_prod,
+    "vps": settings.domain_vps,
+    "ops": "ws://ops.koreainvestment.com:21000",
+    "vops": "ws://ops.koreainvestment.com:31000",
+}
 
 _TRENV = tuple()
 _last_auth_time = datetime.now()
