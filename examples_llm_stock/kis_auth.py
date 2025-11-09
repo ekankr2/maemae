@@ -46,8 +46,7 @@ if os.path.exists(token_tmp) == False:
 
 # 앱키, 앱시크리트, 토큰, 계좌번호 등 저장관리, 자신만의 경로와 파일명으로 설정하시기 바랍니다.
 # pip install PyYAML (패키지설치)
-yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kis_devlp.yaml")
-with open(yaml_path, encoding="UTF-8") as f:
+with open(os.path.join(config_root, "kis_devlp.yaml"), encoding="UTF-8") as f:
     _cfg = yaml.load(f, Loader=yaml.FullLoader)
 
 _TRENV = tuple()

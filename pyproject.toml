@@ -1,0 +1,17 @@
+[project]
+name = "maemae"
+version = "1.0.0"
+description = "Korea Investment 자동매매 퀀트투자 앱"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.3.1",
+    "pycryptodome>=3.23.0",
+    "pyqt6>=6.9.1",
+    "pyside6>=6.9.1",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.4",
+    "websockets>=15.0.1",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
