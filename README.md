@@ -105,8 +105,8 @@ uv run python websocket_server.py
 - [x] 한투 API 연동
 - [x] FastAPI REST API 구현
 - [x] WebSocket 실시간 시세
-- [ ] 매매 전략 엔진 (이동평균, RSI, 볼린저밴드 등)
-- [ ] 백테스팅 시스템
+- [x] 매매 전략 엔진 (풍선이론: 거래량 돌파 전략)
+- [x] 백테스팅 시스템 (backtesting.py)
 - [ ] 리스크 관리 (손절/익절)
 - [ ] 자동매매 실행 엔진
 - [ ] 모니터링 대시보드
