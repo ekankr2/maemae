@@ -2,7 +2,7 @@
 기술적 지표 계산 테스트
 """
 import pytest
-from indicators.moving_average import calculate_moving_average
+from indicators.moving_average import calculate_moving_average, calculate_ema
 
 
 @pytest.mark.unit
@@ -54,3 +54,29 @@ class TestMovingAverage:
         # When & Then
         with pytest.raises(ValueError, match="Not enough data"):
             calculate_moving_average(prices, period)
+
+
+@pytest.mark.unit
+class TestExponentialMovingAverage:
+    """지수 이동평균 계산 테스트"""
+
+    def test_calculate_5day_ema(self):
+        """5일 EMA 계산"""
+        # Given: 10일의 종가 데이터
+        prices = [100, 102, 101, 103, 104, 105, 103, 106, 108, 107]
+        period = 5
+
+        # When: 5일 EMA 계산
+        result = calculate_ema(prices, period)
+
+        # Then: EMA는 최근 값에 더 높은 가중치
+        # 수동 계산:
+        # 1. 첫 EMA는 처음 5개의 SMA: (100+102+101+103+104)/5 = 102
+        # 2. multiplier = 2/(5+1) = 0.333...
+        # 3. EMA[5] = (105-102)*0.333 + 102 = 103.0
+        # 4. EMA[6] = (103-103.0)*0.333 + 103.0 = 103.0
+        # 5. EMA[7] = (106-103.0)*0.333 + 103.0 = 104.0
+        # 6. EMA[8] = (108-104.0)*0.333 + 104.0 = 105.333
+        # 7. EMA[9] = (107-105.333)*0.333 + 105.333 = 105.889
+        expected = 105.889
+        assert result == pytest.approx(expected, rel=0.01)
