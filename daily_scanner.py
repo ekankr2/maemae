@@ -2,12 +2,14 @@
 일일 매수 후보 스캐너
 
 거래량 상위 종목을 스캔하여
-이평 때리기 전략 매수 조건에 맞는 종목을 찾아냅니다.
+풍선이론 (Balloon Theory) 전략 매수 조건에 맞는 종목을 찾아냅니다.
 
 매수 조건:
-1. 가격 1000원 이상 (동전주 제외)
-2. 현재가 > EMA60 (상승장 필터)
-3. EMA224 밑 OR EMA224 위 2% 이내 (상승 여력)
+1. 주가 1,000원 이상
+2. 종가가 EMA60 위에 있음 (상승 추세)
+3. 당일 거래량이 전일 거래량 대비 500% 이상 증가
+4. 양봉이어야 함 (종가 > 시가)
+5. 거래량이 50만개 이상
 """
 import sys
 sys.path.extend(['.'])
@@ -48,71 +50,92 @@ def get_ema_distance(price, ema_value):
 
 def scan_stock(code, name):
     """
-    개별 종목 스캔
+    개별 종목 스캔 - 풍선이론 전략 조건
 
     매수 조건:
-    1. 현재가 > EMA60 (상승장 필터)
-    2. EMA224 밑 OR EMA224 위 2% 이내 (상승 여력)
+    1. 종가가 EMA60 위에 있음 (상승 추세)
+    2. 주가가 1,000원 이상
+    3. 당일 거래량이 전일 거래량 대비 500% 이상 증가
+    4. 양봉이어야 함 (종가 > 시가)
+    5. 거래량이 50만개 이상
 
     Returns:
         dict or None: 매수 조건 충족 시 종목 정보, 아니면 None
     """
-    # ETF/ETN/SPAC 제외 필터
+    # ETF/ETN/SPAC/지수 제외 필터
     exclude_keywords = ['KODEX', 'TIGER', 'ARIRANG', 'KBSTAR', 'SMART',
-                        '선물', '인버스', '레버리지', 'ETN', 'ETF', '스팩', 'SPAC']
+                        '선물', '인버스', '레버리지', 'ETN', 'ETF', '스팩', 'SPAC',
+                        '코스피', '코스닥', 'KOSPI', 'KOSDAQ']
 
     for keyword in exclude_keywords:
         if keyword in name:
             return None
 
     try:
-        # 최근 250일치 데이터 로드 (EMA224 계산을 위해)
+        # 최근 데이터 로드 (EMA60 계산을 위해 최소 60일 필요)
         end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")  # 약 6개월치면 충분
 
         df = load_stock_data(code, start_date, end_date, adjusted=True)
 
-        if len(df) < 224:
-            return None  # 데이터 부족
+        if len(df) < 60:
+            return None  # 데이터 부족 (최소 60일 필요)
 
-        # 현재 데이터
-        current_price = df['Close'].iloc[-1]
+        # 최소 2일치 데이터 필요 (전일 거래량 비교를 위해)
+        if len(df) < 2:
+            return None
+
+        # 현재 데이터 (가장 최근 일봉)
+        current_close = df['Close'].iloc[-1]
         current_open = df['Open'].iloc[-1]
+        current_volume = df['Volume'].iloc[-1]
 
-        # EMA 계산
+        # 전일 데이터
+        prev_close = df['Close'].iloc[-2]
+        prev_volume = df['Volume'].iloc[-2]
+
+        # EMA60 계산
         closes = df['Close'].values
         ema60 = calculate_ema(closes, 60)
-        ema112 = calculate_ema(closes, 112)
-        ema224 = calculate_ema(closes, 224)
 
-        # 필터 1: 현재가 > EMA60 (상승장 필터)
-        if current_price < ema60:
+        # 조건 1: 종가가 EMA60 위에 있는지 확인
+        if current_close <= ema60:
             return None
 
-        # 필터 2: EMA224 위에 있으면 2% 이내만 허용
-        ema224_distance = get_ema_distance(current_price, ema224)
-        if current_price > ema224 and ema224_distance > 2.0:
+        # 조건 2: 주가가 1,000원 이상
+        if current_close < 1000:
             return None
 
-        # 가장 가까운 EMA 찾기 (정보 표시용)
-        distances = {
-            60: abs(get_ema_distance(current_price, ema60)),
-            112: abs(get_ema_distance(current_price, ema112)),
-            224: abs(get_ema_distance(current_price, ema224))
-        }
-        closest_ema = min(distances, key=distances.get)
-        distance = get_ema_distance(current_price, eval(f"ema{closest_ema}"))
+        # 조건 3: 양봉 확인 (종가 > 시가)
+        if current_close <= current_open:
+            return None
 
-        # 매수 조건 충족!
+        # 조건 4: 전일 거래량이 0이면 계산 불가
+        if prev_volume == 0:
+            return None
+
+        # 조건 5: 당일 거래량이 전일 거래량 대비 500% 이상 증가
+        volume_ratio = current_volume / prev_volume
+        if volume_ratio < 5.0:  # 500% = 5.0배
+            return None
+
+        # 조건 6: 거래량 절대값 확인 (50만개 이상)
+        if current_volume < 500000:
+            return None
+
+        # EMA60 이격률 계산
+        ema60_distance = get_ema_distance(current_close, ema60)
+
+        # 모든 조건 충족!
         return {
             '종목코드': code,
             '종목명': name,
-            '현재가': f"{current_price:,.0f}",
-            'EMA근접': f"EMA{closest_ema}",
-            '이격률': f"{distance:+.2f}%",
+            '현재가': f"{current_close:,.0f}",
             'EMA60': f"{ema60:,.0f}",
-            'EMA112': f"{ema112:,.0f}",
-            'EMA224': f"{ema224:,.0f}",
+            '이격률': f"{ema60_distance:+.2f}%",
+            '거래량증가율': f"{volume_ratio:.2f}배",
+            '전일거래량': f"{prev_volume:,.0f}",
+            '당일거래량': f"{current_volume:,.0f}",
         }
 
     except Exception as e:
@@ -123,7 +146,7 @@ def scan_stock(code, name):
 def main():
     """일일 스캐너 실행"""
     print("=" * 80)
-    print("이평 때리기 일일 매수 후보 스캐너 (거래량 기반)")
+    print("풍선이론 (Balloon Theory) 일일 매수 후보 스캐너")
     print("=" * 80)
 
     # 1. KIS API 인증
@@ -231,7 +254,7 @@ def main():
 
     # 3. 각 종목 스캔
     print(f"\n[3/4] {len(all_stocks)}개 종목 스캔 중...")
-    print("  (EMA60 위 + EMA224 밑 또는 2% 이내)")
+    print("  (EMA60 위 + 거래량 500% 증가 + 양봉)")
     print()
 
     candidates = []

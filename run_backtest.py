@@ -3,84 +3,301 @@
 
 풍선이론 (거래량 돌파) 전략 테스트
 """
+import sys
+import os
+import pandas as pd
+from datetime import datetime
 from backtesting import Backtest
 import kis_auth as ka
 from data_loader import load_stock_data
 from strategies.balloon_theory_strategy import BalloonTheoryStrategy
+from examples_llm_stock.volume_rank.volume_rank import volume_rank
+from examples_llm_stock.market_cap.market_cap import market_cap
+
+
+def safe_float(value, default=0.0):
+    """NaN 값을 안전하게 처리하는 헬퍼 함수"""
+    if value is None:
+        return default
+    try:
+        val = float(value)
+        if val != val or val == float('inf') or val == float('-inf'):  # NaN, inf 체크
+            return default
+        return val
+    except (ValueError, TypeError):
+        return default
+
+
+def run_backtest_single(stock_code, start_date, end_date, cash=10_000_000, commission=0.0015):
+    """단일 종목 백테스팅 실행"""
+    try:
+        df = load_stock_data(
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjusted=True
+        )
+        
+        if df.empty or len(df) < 60:  # 최소 60일 데이터 필요
+            return None
+        
+        bt = Backtest(
+            df,
+            BalloonTheoryStrategy,
+            cash=cash,
+            commission=commission,
+            exclusive_orders=True,
+            finalize_trades=True  # 백테스팅 종료 시 미청산 포지션 자동 청산
+        )
+        
+        stats = bt.run()
+        
+        equity_curve = stats['_equity_curve']['Equity']
+        initial_equity = safe_float(equity_curve.iloc[0] if len(equity_curve) > 0 else 0)
+        
+        return {
+            "stock_code": stock_code,
+            "success": True,
+            "initial_equity": initial_equity,
+            "final_equity": safe_float(stats.get('Equity Final [$]', 0)),
+            "return_pct": safe_float(stats.get('Return [%]', 0)),
+            "total_trades": int(stats.get('# Trades', 0)),
+            "win_rate_pct": safe_float(stats.get('Win Rate [%]', 0)),
+            "max_drawdown_pct": safe_float(stats.get('Max. Drawdown [%]', 0)),
+            "sharpe_ratio": safe_float(stats.get('Sharpe Ratio', 0))
+        }
+    except Exception as e:
+        return {
+            "stock_code": stock_code,
+            "success": False,
+            "error": str(e)
+        }
+
+
+def get_stock_list_from_csv(csv_file=None):
+    """CSV 파일에서 종목 리스트 가져오기"""
+    if csv_file is None:
+        # 최신 CSV 파일 찾기
+        csv_files = [f for f in os.listdir('.') if f.startswith('buy_candidates_') and f.endswith('.csv')]
+        if not csv_files:
+            return None
+        csv_file = max(csv_files)  # 가장 최신 파일
+    
+    if not os.path.exists(csv_file):
+        return None
+    
+    df = pd.read_csv(csv_file, encoding='utf-8-sig')
+    
+    # 종목코드 컬럼 찾기
+    for col in ['종목코드', 'code', 'stock_code', 'mksc_shrn_iscd']:
+        if col in df.columns:
+            return df[col].tolist()
+    
+    return None
+
+
+def get_stock_list_from_api():
+    """API로 거래량 상위 종목 리스트 가져오기 (스캐너와 동일한 조건)"""
+    print("  거래량 상위 종목 조회 중 (여러 기준 병합)...")
+    
+    # 2-1. 평균거래량 기준 (30개)
+    print("  - 평균거래량 기준...")
+    stocks_avg_volume = volume_rank(
+        fid_cond_mrkt_div_code="J",
+        fid_cond_scr_div_code="20171",
+        fid_input_iscd="0000",
+        fid_div_cls_code="0",
+        fid_blng_cls_code="0",  # 0: 평균거래량
+        fid_trgt_cls_code="111111111",
+        fid_trgt_exls_cls_code="0000000000",
+        fid_input_price_1="1000",  # 1000원 이상
+        fid_input_price_2="",
+        fid_vol_cnt="",
+        fid_input_date_1=""
+    )
+    print(f"    {len(stocks_avg_volume)}개")
+    
+    # 2-2. 거래증가율 기준 (30개)
+    print("  - 거래증가율 기준...")
+    stocks_vol_increase = volume_rank(
+        fid_cond_mrkt_div_code="J",
+        fid_cond_scr_div_code="20171",
+        fid_input_iscd="0000",
+        fid_div_cls_code="0",
+        fid_blng_cls_code="1",  # 1: 거래증가율
+        fid_trgt_cls_code="111111111",
+        fid_trgt_exls_cls_code="0000000000",
+        fid_input_price_1="1000",
+        fid_input_price_2="",
+        fid_vol_cnt="",
+        fid_input_date_1=""
+    )
+    print(f"    {len(stocks_vol_increase)}개")
+    
+    # 2-3. 거래금액순 기준 (30개)
+    print("  - 거래금액순 기준...")
+    stocks_amount = volume_rank(
+        fid_cond_mrkt_div_code="J",
+        fid_cond_scr_div_code="20171",
+        fid_input_iscd="0000",
+        fid_div_cls_code="0",
+        fid_blng_cls_code="3",  # 3: 거래금액순
+        fid_trgt_cls_code="111111111",
+        fid_trgt_exls_cls_code="0000000000",
+        fid_input_price_1="1000",
+        fid_input_price_2="",
+        fid_vol_cnt="",
+        fid_input_date_1=""
+    )
+    print(f"    {len(stocks_amount)}개")
+    
+    # 2-4. 코스피 시총순 (30개)
+    print("  - 코스피 시총순...")
+    stocks_kospi_cap = market_cap(
+        fid_input_price_2="",
+        fid_cond_mrkt_div_code="J",
+        fid_cond_scr_div_code="20174",
+        fid_div_cls_code="0",
+        fid_input_iscd="0001",  # 0001: 코스피
+        fid_trgt_cls_code="0",
+        fid_trgt_exls_cls_code="0",
+        fid_input_price_1="1000",
+        fid_vol_cnt=""
+    )
+    print(f"    {len(stocks_kospi_cap)}개")
+    
+    # 2-5. 코스닥 시총순 (30개)
+    print("  - 코스닥 시총순...")
+    stocks_kosdaq_cap = market_cap(
+        fid_input_price_2="",
+        fid_cond_mrkt_div_code="J",
+        fid_cond_scr_div_code="20174",
+        fid_div_cls_code="0",
+        fid_input_iscd="1001",  # 1001: 코스닥
+        fid_trgt_cls_code="0",
+        fid_trgt_exls_cls_code="0",
+        fid_input_price_1="1000",
+        fid_vol_cnt=""
+    )
+    print(f"    {len(stocks_kosdaq_cap)}개")
+    
+    # 모든 결과 합치기
+    all_stocks = pd.concat([
+        stocks_avg_volume,
+        stocks_vol_increase,
+        stocks_amount,
+        stocks_kospi_cap,
+        stocks_kosdaq_cap
+    ], ignore_index=True)
+    
+    # 중복 제거 (종목코드 기준)
+    all_stocks = all_stocks.drop_duplicates(subset=['mksc_shrn_iscd'], keep='first')
+    
+    print(f"  ✓ 총 {len(all_stocks)}개 종목 로드 완료 (중복 제거 후)")
+    
+    return all_stocks['mksc_shrn_iscd'].tolist()
 
 
 def main():
     """
-    백테스팅 실행
+    백테스팅 실행 (여러 종목 자동 처리)
     """
-    print("=" * 60)
-    print("풍선이론 (Balloon Theory) 전략 백테스팅")
-    print("=" * 60)
+    print("=" * 80)
+    print("풍선이론 (Balloon Theory) 전략 백테스팅 - 다중 종목")
+    print("=" * 80)
 
-    # 1. KIS API 인증 (실전투자)
-    print("\n[1/4] KIS API 인증 중 (실전투자 API)...")
-    ka.auth(svr="prod")  # prod: 실전투자
+    # 1. KIS API 인증
+    print("\n[1/5] KIS API 인증 중...")
+    ka.auth(svr="prod")
     print("✓ 인증 완료")
 
-    # 2. 과거 데이터 로드
-    print("\n[2/4] 삼성전자 일봉 데이터 로딩 중...")
-    stock_code = "005930"  # 삼성전자
-    start_date = "20220101"  # 2년치 데이터
+    # 2. 종목 리스트 가져오기 (항상 API로 가져오기)
+    print("\n[2/5] 종목 리스트 수집 중...")
+    
+    # API로 종목 가져오기 (스캐너와 동일한 조건으로 150개)
+    stock_codes = get_stock_list_from_api()
+    
+    if not stock_codes:
+        print("✗ 종목 리스트를 가져올 수 없습니다.")
+        return
+    
+    # 최대 150개로 제한 (너무 많으면 시간이 오래 걸림)
+    if len(stock_codes) > 150:
+        print(f"  (150개로 제한: {len(stock_codes)}개 중)")
+        stock_codes = stock_codes[:150]
+
+    # 3. 백테스팅 파라미터
+    start_date = "20220101"
     end_date = "20231231"
+    cash = 10_000_000
+    commission = 0.0015
 
-    df = load_stock_data(
-        stock_code=stock_code,
-        start_date=start_date,
-        end_date=end_date,
-        adjusted=True  # 수정주가 사용
-    )
-    print(f"✓ 데이터 로드 완료: {len(df)}개 봉")
-    print(f"  기간: {df.index[0]} ~ {df.index[-1]}")
-    print(f"\n데이터 샘플:\n{df.head()}")
+    # 4. 각 종목 백테스팅 실행
+    print(f"\n[3/5] {len(stock_codes)}개 종목 백테스팅 실행 중...")
+    print(f"  기간: {start_date} ~ {end_date}")
+    print()
+    
+    results = []
+    total_initial = 0
+    total_final = 0
+    total_trades = 0
+    
+    for i, stock_code in enumerate(stock_codes, 1):
+        stock_code_str = str(stock_code).zfill(6)
+        print(f"  [{i}/{len(stock_codes)}] {stock_code_str}... ", end="", flush=True)
+        
+        result = run_backtest_single(stock_code_str, start_date, end_date, cash, commission)
+        
+        if result and result.get("success"):
+            results.append(result)
+            total_initial += result["initial_equity"]
+            total_final += result["final_equity"]
+            total_trades += result["total_trades"]
+            print(f"✓ 거래 {result['total_trades']}회, 수익률 {result['return_pct']:.2f}%")
+        else:
+            error_msg = result.get("error", "데이터 부족") if result else "데이터 부족"
+            print(f"✗ ({error_msg[:30]})")
 
-    # 3. 백테스팅 설정
-    print("\n[3/4] 백테스팅 설정 중...")
-    bt = Backtest(
-        df,
-        BalloonTheoryStrategy,
-        cash=10_000_000,  # 초기 자본금 1천만원
-        commission=0.0015,  # 수수료 0.15%
-        exclusive_orders=True  # 동시에 여러 주문 불가
-    )
-    print("✓ 백테스팅 설정 완료")
+    # 5. 결과 요약
+    print("\n" + "=" * 80)
+    print("[4/5] 백테스팅 결과 요약")
+    print("=" * 80)
+    
+    if not results:
+        print("\n거래가 발생한 종목이 없습니다.")
+        return
+    
+    successful_stocks = [r for r in results if r.get("total_trades", 0) > 0]
+    
+    print(f"\n전체 통계:")
+    print(f"  테스트 종목 수:        {len(stock_codes):>15} 개")
+    print(f"  성공한 백테스팅:       {len(results):>15} 개")
+    print(f"  거래 발생 종목:        {len(successful_stocks):>15} 개")
+    
+    if successful_stocks:
+        print(f"\n거래 발생 종목 상세:")
+        print(f"{'종목코드':<10} {'거래횟수':<10} {'수익률':<12} {'승률':<10} {'MDD':<10}")
+        print("-" * 60)
+        
+        # 수익률 순으로 정렬
+        successful_stocks.sort(key=lambda x: x.get("return_pct", 0), reverse=True)
+        
+        for r in successful_stocks[:20]:  # 상위 20개만 표시
+            print(f"{r['stock_code']:<10} {r['total_trades']:<10} {r['return_pct']:>10.2f}% {r['win_rate_pct']:>8.2f}% {r['max_drawdown_pct']:>8.2f}%")
+    
+    total_return = ((total_final - total_initial) / total_initial * 100) if total_initial > 0 else 0
+    
+    print(f"\n전체 포트폴리오:")
+    print(f"  총 초기 자본:          {total_initial:>15,.0f} 원")
+    print(f"  총 최종 자산:          {total_final:>15,.0f} 원")
+    print(f"  총 수익률:            {total_return:>15.2f} %")
+    print(f"  총 거래 횟수:         {total_trades:>15} 회")
+    
+    print("\n" + "=" * 80)
+    print("[5/5] 완료")
+    print("=" * 80)
 
-    # 4. 백테스팅 실행
-    print("\n[4/4] 백테스팅 실행 중...")
-    stats = bt.run()
-    print("✓ 백테스팅 완료")
-
-    # 5. 결과 출력
-    print("\n" + "=" * 60)
-    print("백테스팅 결과")
-    print("=" * 60)
-    print(f"\n전략: 풍선이론 (Volume Breakout)")
-    print(f"  - EMA{BalloonTheoryStrategy.ema_period} 위 종목 선택")
-    print(f"  - 거래량 {BalloonTheoryStrategy.volume_multiplier}배 이상 증가")
-    print(f"  - 최소 주가: {BalloonTheoryStrategy.min_price:,}원")
-    print(f"\n주요 성과 지표:")
-    print(f"  초기 자본금:        {stats['_equity_curve']['Equity'][0]:>15,.0f} 원")
-    print(f"  최종 자산:          {stats['Equity Final [$]']:>15,.0f} 원")
-    print(f"  총 수익률:          {stats['Return [%]']:>15.2f} %")
-    print(f"  연환산 수익률:      {stats.get('Return (Ann.) [%]', 0):>15.2f} %")
-    print(f"\n거래 정보:")
-    print(f"  총 거래 횟수:       {stats['# Trades']:>15} 회")
-    print(f"  승률:               {stats['Win Rate [%]']:>15.2f} %")
-    print(f"\n리스크 지표:")
-    print(f"  최대 낙폭 (MDD):    {stats['Max. Drawdown [%]']:>15.2f} %")
-    print(f"  샤프 비율:          {stats.get('Sharpe Ratio', 0):>15.2f}")
-
-    # 6. 차트 생성 (선택)
-    print("\n백테스팅 차트를 생성하시겠습니까? (브라우저에서 열립니다)")
-    user_input = input("y/n: ").strip().lower()
-    if user_input == 'y':
-        bt.plot()
-
-    return stats
+    return results
 
 
 if __name__ == "__main__":
