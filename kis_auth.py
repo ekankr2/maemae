@@ -43,6 +43,10 @@ token_tmp = os.path.join(
     config_root, f"KIS{datetime.today().strftime("%Y%m%d")}"
 )  # 토큰 로컬저장시 파일명 년월일
 
+# 접근토큰 관리하는 디렉토리 존재여부 체크, 없으면 생성
+if not os.path.exists(config_root):
+    os.makedirs(config_root, exist_ok=True)
+
 # 접근토큰 관리하는 파일 존재여부 체크, 없으면 생성
 if os.path.exists(token_tmp) == False:
     f = open(token_tmp, "w+")
