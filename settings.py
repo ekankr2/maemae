@@ -9,17 +9,17 @@ from pydantic import Field
 class Settings(BaseSettings):
     """한국투자증권 API 설정"""
 
-    # 모의투자 (필수)
-    paper_app: str = Field(..., description="모의투자 앱키")
-    paper_sec: str = Field(..., description="모의투자 앱키 시크릿")
-    my_paper_stock: str = Field(..., description="모의투자 증권계좌 8자리")
+    # 실전투자 (필수)
+    real_app: str = Field(..., description="실전투자 앱키")
+    real_sec: str = Field(..., description="실전투자 앱키 시크릿")
+    my_real_stock: str = Field(..., description="실전투자 증권계좌 8자리")
     my_htsid: str = Field(..., description="HTS ID")
     my_prod: str = Field(default="01", description="계좌상품코드 (기본: 01)")
 
-    # 실전투자 (선택)
-    real_app: str = Field(default="", description="실전투자 앱키")
-    real_sec: str = Field(default="", description="실전투자 앱키 시크릿")
-    my_real_stock: str = Field(default="", description="실전투자 증권계좌 8자리")
+    # 모의투자 (선택)
+    paper_app: str = Field(default="", description="모의투자 앱키")
+    paper_sec: str = Field(default="", description="모의투자 앱키 시크릿")
+    my_paper_stock: str = Field(default="", description="모의투자 증권계좌 8자리")
 
     # 도메인 (고정값)
     domain_prod: str = "https://openapi.koreainvestment.com:9443"

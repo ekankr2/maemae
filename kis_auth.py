@@ -63,6 +63,7 @@ _cfg = {
     "my_real_app": settings.real_app,
     "my_real_sec": settings.real_sec,
     "my_real_acct": settings.my_real_stock,
+    "my_acct_stock": settings.my_real_stock,
     "my_paper_app": settings.paper_app,
     "my_paper_sec": settings.paper_sec,
     "my_paper_acct": settings.my_paper_stock,

@@ -17,23 +17,22 @@ def main():
     print("이평 때리기 (EMA Pullback) 전략 백테스팅")
     print("=" * 60)
 
-    # 1. KIS API 인증 (모의투자 서버)
-    print("\n[1/4] KIS API 인증 중...")
-    ka.auth(svr="vps")  # vps: 모의투자
+    # 1. KIS API 인증 (실전투자)
+    print("\n[1/4] KIS API 인증 중 (실전투자 API)...")
+    ka.auth(svr="prod")  # prod: 실전투자
     print("✓ 인증 완료")
 
     # 2. 과거 데이터 로드
     print("\n[2/4] 삼성전자 일봉 데이터 로딩 중...")
     stock_code = "005930"  # 삼성전자
-    start_date = "20230101"
+    start_date = "20220101"  # 2년치 데이터 (EMA224 계산을 위해)
     end_date = "20231231"
 
     df = load_stock_data(
         stock_code=stock_code,
         start_date=start_date,
         end_date=end_date,
-        adjusted=True,  # 수정주가 사용
-        mode="vps"
+        adjusted=True  # 수정주가 사용
     )
     print(f"✓ 데이터 로드 완료: {len(df)}개 봉")
     print(f"  기간: {df.index[0]} ~ {df.index[-1]}")

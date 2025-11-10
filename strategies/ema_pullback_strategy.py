@@ -23,8 +23,7 @@ class EMAPullbackStrategy(Strategy):
     3. 다시 반등 시그널 (종가 > 시가)
 
     매도 조건:
-    - EMA60 근처 매수 → EMA112 도달 시 매도
-    - EMA112 근처 매수 → EMA224 도달 시 매도
+    - EMA60 이탈 시 매도
     """
 
     # EMA 기간 설정
@@ -91,10 +90,14 @@ class EMAPullbackStrategy(Strategy):
         매수 시그널 체크
 
         조건:
-        1. 주가가 EMA 위에 있음 (돌파 완료)
-        2. 현재 주가가 EMA 근처 (눌림목)
+        1. 현재가가 EMA60 위에 있음 (상승장 필터)
+        2. 주가가 EMA 근처로 접근 (눌림목)
         3. 반등 시그널 (종가 > 시가)
         """
+        # 상승장 필터: 주가가 EMA60 아래면 매수 안 함
+        if close < self.ema60[-1]:
+            return
+
         # 반등 확인: 양봉
         is_bullish = close > open_price
 
@@ -132,28 +135,9 @@ class EMAPullbackStrategy(Strategy):
         """
         매도 시그널 체크
 
-        조건: 더 상위 EMA에 도달하면 매도
-        - EMA60 매수 → EMA112 도달 시 매도
-        - EMA112 매수 → EMA224 도달 시 매도
-        - EMA224 매수 → 특정 수익률 도달 시 매도 (예: +10%)
+        조건: EMA60 아래로 이탈하면 전량 매도 (추세 전환)
         """
-        if self.buy_ema_level == 60:
-            # EMA112에 도달하면 매도
-            if self._is_near_ema(close, self.ema112[-1]):
-                self.position.close()
-                self.buy_ema_level = None
-
-        elif self.buy_ema_level == 112:
-            # EMA224에 도달하면 매도
-            if self._is_near_ema(close, self.ema224[-1]):
-                self.position.close()
-                self.buy_ema_level = None
-
-        elif self.buy_ema_level == 224:
-            # 최상위 EMA이므로 수익률 기준으로 매도 (예: +10%)
-            entry_price = self.position.pl  # 진입가 확인
-            profit_pct = ((close - self.trades[-1].entry_price) / self.trades[-1].entry_price) * 100
-
-            if profit_pct >= 10:  # 10% 수익 시 매도
-                self.position.close()
-                self.buy_ema_level = None
+        # EMA60 이탈 시 매도
+        if close < self.ema60[-1]:
+            self.position.close()
+            self.buy_ema_level = None
