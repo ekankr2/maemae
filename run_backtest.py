@@ -28,7 +28,7 @@ def safe_float(value, default=0.0):
         return default
 
 
-def run_backtest_single(stock_code, start_date, end_date, cash=10_000_000, commission=0.0015):
+def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_000_000, commission=0.0015):
     """단일 종목 백테스팅 실행"""
     try:
         df = load_stock_data(
@@ -37,10 +37,10 @@ def run_backtest_single(stock_code, start_date, end_date, cash=10_000_000, commi
             end_date=end_date,
             adjusted=True
         )
-        
+
         if df.empty or len(df) < 60:  # 최소 60일 데이터 필요
             return None
-        
+
         bt = Backtest(
             df,
             BalloonTheoryStrategy,
@@ -49,14 +49,15 @@ def run_backtest_single(stock_code, start_date, end_date, cash=10_000_000, commi
             exclusive_orders=True,
             finalize_trades=True  # 백테스팅 종료 시 미청산 포지션 자동 청산
         )
-        
+
         stats = bt.run()
-        
+
         equity_curve = stats['_equity_curve']['Equity']
         initial_equity = safe_float(equity_curve.iloc[0] if len(equity_curve) > 0 else 0)
-        
+
         return {
             "stock_code": stock_code,
+            "stock_name": stock_name,
             "success": True,
             "initial_equity": initial_equity,
             "final_equity": safe_float(stats.get('Equity Final [$]', 0)),
@@ -69,6 +70,7 @@ def run_backtest_single(stock_code, start_date, end_date, cash=10_000_000, commi
     except Exception as e:
         return {
             "stock_code": stock_code,
+            "stock_name": stock_name,
             "success": False,
             "error": str(e)
         }
@@ -99,7 +101,7 @@ def get_stock_list_from_csv(csv_file=None):
 def get_stock_list_from_api():
     """API로 거래량 상위 종목 리스트 가져오기 (스캐너와 동일한 조건)"""
     print("  거래량 상위 종목 조회 중 (여러 기준 병합)...")
-    
+
     # 2-1. 평균거래량 기준 (30개)
     print("  - 평균거래량 기준...")
     stocks_avg_volume = volume_rank(
@@ -116,7 +118,7 @@ def get_stock_list_from_api():
         fid_input_date_1=""
     )
     print(f"    {len(stocks_avg_volume)}개")
-    
+
     # 2-2. 거래증가율 기준 (30개)
     print("  - 거래증가율 기준...")
     stocks_vol_increase = volume_rank(
@@ -133,7 +135,7 @@ def get_stock_list_from_api():
         fid_input_date_1=""
     )
     print(f"    {len(stocks_vol_increase)}개")
-    
+
     # 2-3. 거래금액순 기준 (30개)
     print("  - 거래금액순 기준...")
     stocks_amount = volume_rank(
@@ -150,7 +152,7 @@ def get_stock_list_from_api():
         fid_input_date_1=""
     )
     print(f"    {len(stocks_amount)}개")
-    
+
     # 2-4. 코스피 시총순 (30개)
     print("  - 코스피 시총순...")
     stocks_kospi_cap = market_cap(
@@ -165,7 +167,7 @@ def get_stock_list_from_api():
         fid_vol_cnt=""
     )
     print(f"    {len(stocks_kospi_cap)}개")
-    
+
     # 2-5. 코스닥 시총순 (30개)
     print("  - 코스닥 시총순...")
     stocks_kosdaq_cap = market_cap(
@@ -180,7 +182,7 @@ def get_stock_list_from_api():
         fid_vol_cnt=""
     )
     print(f"    {len(stocks_kosdaq_cap)}개")
-    
+
     # 모든 결과 합치기
     all_stocks = pd.concat([
         stocks_avg_volume,
@@ -189,13 +191,35 @@ def get_stock_list_from_api():
         stocks_kospi_cap,
         stocks_kosdaq_cap
     ], ignore_index=True)
-    
+
     # 중복 제거 (종목코드 기준)
     all_stocks = all_stocks.drop_duplicates(subset=['mksc_shrn_iscd'], keep='first')
-    
+
     print(f"  ✓ 총 {len(all_stocks)}개 종목 로드 완료 (중복 제거 후)")
-    
-    return all_stocks['mksc_shrn_iscd'].tolist()
+
+    # ETF/ETN 제외 키워드
+    exclude_keywords = ['KODEX', 'TIGER', 'KINDEX', 'KOSEF', 'ARIRANG', 'KBSTAR',
+                        'HANARO', 'TIMEFOLIO', 'SOL', 'TREX', 'ACE',
+                        '코스피', '코스닥', 'ETF', 'ETN', '레버리지', '인버스',
+                        '곱버스', '2X', '3X', 'X2', 'X3']
+
+    # 종목코드와 종목명을 딕셔너리로 반환 (ETF/ETN 제외)
+    stock_dict = {}
+    filtered_count = 0
+    for _, row in all_stocks.iterrows():
+        code = row['mksc_shrn_iscd']
+        name = row.get('hts_kor_isnm', '').strip() if 'hts_kor_isnm' in row else ''
+
+        # ETF/ETN 필터링
+        if any(keyword in name.upper() for keyword in [k.upper() for k in exclude_keywords]):
+            filtered_count += 1
+            continue
+
+        stock_dict[code] = name
+
+    print(f"  ✓ ETF/ETN {filtered_count}개 제외, 최종 {len(stock_dict)}개 종목")
+
+    return stock_dict
 
 
 def main():
@@ -213,18 +237,18 @@ def main():
 
     # 2. 종목 리스트 가져오기 (항상 API로 가져오기)
     print("\n[2/5] 종목 리스트 수집 중...")
-    
+
     # API로 종목 가져오기 (스캐너와 동일한 조건으로 150개)
-    stock_codes = get_stock_list_from_api()
-    
-    if not stock_codes:
+    stock_dict = get_stock_list_from_api()
+
+    if not stock_dict:
         print("✗ 종목 리스트를 가져올 수 없습니다.")
         return
-    
+
     # 최대 150개로 제한 (너무 많으면 시간이 오래 걸림)
-    if len(stock_codes) > 150:
-        print(f"  (150개로 제한: {len(stock_codes)}개 중)")
-        stock_codes = stock_codes[:150]
+    if len(stock_dict) > 150:
+        print(f"  (150개로 제한: {len(stock_dict)}개 중)")
+        stock_dict = dict(list(stock_dict.items())[:150])
 
     # 3. 백테스팅 파라미터
     start_date = "20220101"
@@ -233,21 +257,22 @@ def main():
     commission = 0.0015
 
     # 4. 각 종목 백테스팅 실행
-    print(f"\n[3/5] {len(stock_codes)}개 종목 백테스팅 실행 중...")
+    print(f"\n[3/5] {len(stock_dict)}개 종목 백테스팅 실행 중...")
     print(f"  기간: {start_date} ~ {end_date}")
     print()
-    
+
     results = []
     total_initial = 0
     total_final = 0
     total_trades = 0
-    
-    for i, stock_code in enumerate(stock_codes, 1):
+
+    for i, (stock_code, stock_name) in enumerate(stock_dict.items(), 1):
         stock_code_str = str(stock_code).zfill(6)
-        print(f"  [{i}/{len(stock_codes)}] {stock_code_str}... ", end="", flush=True)
-        
-        result = run_backtest_single(stock_code_str, start_date, end_date, cash, commission)
-        
+        display_name = f"{stock_name[:8]}" if stock_name else stock_code_str
+        print(f"  [{i}/{len(stock_dict)}] {stock_code_str} ({display_name})... ", end="", flush=True)
+
+        result = run_backtest_single(stock_code_str, stock_name, start_date, end_date, cash, commission)
+
         if result and result.get("success"):
             results.append(result)
             total_initial += result["initial_equity"]
@@ -268,22 +293,23 @@ def main():
         return
     
     successful_stocks = [r for r in results if r.get("total_trades", 0) > 0]
-    
+
     print(f"\n전체 통계:")
-    print(f"  테스트 종목 수:        {len(stock_codes):>15} 개")
+    print(f"  테스트 종목 수:        {len(stock_dict):>15} 개")
     print(f"  성공한 백테스팅:       {len(results):>15} 개")
     print(f"  거래 발생 종목:        {len(successful_stocks):>15} 개")
-    
+
     if successful_stocks:
         print(f"\n거래 발생 종목 상세:")
-        print(f"{'종목코드':<10} {'거래횟수':<10} {'수익률':<12} {'승률':<10} {'MDD':<10}")
-        print("-" * 60)
-        
+        print(f"{'종목명':<12} {'코드':<8} {'거래':<6} {'수익률':<10} {'승률':<8} {'MDD':<10}")
+        print("-" * 70)
+
         # 수익률 순으로 정렬
         successful_stocks.sort(key=lambda x: x.get("return_pct", 0), reverse=True)
-        
+
         for r in successful_stocks[:20]:  # 상위 20개만 표시
-            print(f"{r['stock_code']:<10} {r['total_trades']:<10} {r['return_pct']:>10.2f}% {r['win_rate_pct']:>8.2f}% {r['max_drawdown_pct']:>8.2f}%")
+            name = r.get('stock_name', '')[:10] or r['stock_code']
+            print(f"{name:<12} {r['stock_code']:<8} {r['total_trades']:<6} {r['return_pct']:>9.2f}% {r['win_rate_pct']:>7.2f}% {r['max_drawdown_pct']:>9.2f}%")
     
     total_return = ((total_final - total_initial) / total_initial * 100) if total_initial > 0 else 0
     
