@@ -199,7 +199,7 @@ def get_stock_list_from_api():
 
     # ETF/ETN 제외 키워드
     exclude_keywords = ['KODEX', 'TIGER', 'KINDEX', 'KOSEF', 'ARIRANG', 'KBSTAR',
-                        'HANARO', 'TIMEFOLIO', 'SOL', 'TREX', 'ACE',
+                        'HANARO', 'TIMEFOLIO', 'SOL', 'TREX', 'ACE', '스팩',
                         '코스피', '코스닥', 'ETF', 'ETN', '레버리지', '인버스',
                         '곱버스', '2X', '3X', 'X2', 'X3']
 
