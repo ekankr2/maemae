@@ -28,7 +28,7 @@ def safe_float(value, default=0.0):
         return default
 
 
-def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_000_000, commission=0.0015):
+def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_000_000, commission=0.0015, save_chart=True):
     """단일 종목 백테스팅 실행"""
     try:
         df = load_stock_data(
@@ -47,6 +47,7 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
             cash=cash,
             commission=commission,
             exclusive_orders=True,
+            trade_on_close=True,  # 종가 배팅: 신호 발생 시 당일 종가에 즉시 거래 (다음날 시가 X)
             finalize_trades=True  # 백테스팅 종료 시 미청산 포지션 자동 청산
         )
 
@@ -54,19 +55,30 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
 
         equity_curve = stats['_equity_curve']['Equity']
         initial_equity = safe_float(equity_curve.iloc[0] if len(equity_curve) > 0 else 0)
+        total_trades = int(stats.get('# Trades', 0))
 
-        return {
+        result = {
             "stock_code": stock_code,
             "stock_name": stock_name,
             "success": True,
             "initial_equity": initial_equity,
             "final_equity": safe_float(stats.get('Equity Final [$]', 0)),
             "return_pct": safe_float(stats.get('Return [%]', 0)),
-            "total_trades": int(stats.get('# Trades', 0)),
+            "total_trades": total_trades,
             "win_rate_pct": safe_float(stats.get('Win Rate [%]', 0)),
             "max_drawdown_pct": safe_float(stats.get('Max. Drawdown [%]', 0)),
             "sharpe_ratio": safe_float(stats.get('Sharpe Ratio', 0))
         }
+
+        # 거래가 있는 종목만 차트 저장
+        if save_chart and total_trades > 0:
+            safe_name = stock_name.replace(' ', '_').replace('/', '_')
+            chart_filename = f"charts/{stock_code}_{safe_name}_return{result['return_pct']:.1f}pct.html"
+            os.makedirs("charts", exist_ok=True)
+            bt.plot(filename=chart_filename, open_browser=False)
+            result["chart_path"] = chart_filename
+
+        return result
     except Exception as e:
         return {
             "stock_code": stock_code,
@@ -266,10 +278,10 @@ def main():
     total_final = 0
     total_trades = 0
 
+    trade_count = 0  # 거래 발생 종목 카운터
     for i, (stock_code, stock_name) in enumerate(stock_dict.items(), 1):
         stock_code_str = str(stock_code).zfill(6)
         display_name = f"{stock_name[:8]}" if stock_name else stock_code_str
-        print(f"  [{i}/{len(stock_dict)}] {stock_code_str} ({display_name})... ", end="", flush=True)
 
         result = run_backtest_single(stock_code_str, stock_name, start_date, end_date, cash, commission)
 
@@ -278,10 +290,13 @@ def main():
             total_initial += result["initial_equity"]
             total_final += result["final_equity"]
             total_trades += result["total_trades"]
-            print(f"✓ 거래 {result['total_trades']}회, 수익률 {result['return_pct']:.2f}%")
-        else:
-            error_msg = result.get("error", "데이터 부족") if result else "데이터 부족"
-            print(f"✗ ({error_msg[:30]})")
+
+            # 거래가 있는 종목만 로그 출력
+            if result["total_trades"] > 0:
+                trade_count += 1
+                print(f"  [{trade_count}] {stock_code_str} ({display_name}) - 거래 {result['total_trades']}회, 수익률 {result['return_pct']:>8.2f}%, 승률 {result['win_rate_pct']:>6.1f}%")
+                if "chart_path" in result:
+                    print(f"      → 차트: {result['chart_path']}")
 
     # 5. 결과 요약
     print("\n" + "=" * 80)
@@ -300,14 +315,15 @@ def main():
     print(f"  거래 발생 종목:        {len(successful_stocks):>15} 개")
 
     if successful_stocks:
-        print(f"\n거래 발생 종목 상세:")
+        print(f"\n거래 발생 종목 상세 (전체 {len(successful_stocks)}개):")
         print(f"{'종목명':<12} {'코드':<8} {'거래':<6} {'수익률':<10} {'승률':<8} {'MDD':<10}")
         print("-" * 70)
 
         # 수익률 순으로 정렬
         successful_stocks.sort(key=lambda x: x.get("return_pct", 0), reverse=True)
 
-        for r in successful_stocks[:20]:  # 상위 20개만 표시
+        # 전체 거래 발생 종목 표시
+        for r in successful_stocks:
             name = r.get('stock_name', '')[:10] or r['stock_code']
             print(f"{name:<12} {r['stock_code']:<8} {r['total_trades']:<6} {r['return_pct']:>9.2f}% {r['win_rate_pct']:>7.2f}% {r['max_drawdown_pct']:>9.2f}%")
     

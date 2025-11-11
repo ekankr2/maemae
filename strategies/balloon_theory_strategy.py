@@ -2,17 +2,19 @@
 풍선이론 (Balloon Theory) 전략
 
 거래량 급증 시 상승 모멘텀을 포착하는 전략
-- 당일 거래량이 전일 거래량 대비 400% 이상 증가 시 매수
-- 5% 이상 상승
-- 종가 기준 EMA 60일선 위
+- 당일 거래량이 전일 거래량 대비 400% 이상, 1200% 이하 증가 시 매수
+- 4% 이상 상승
+- EMA 60일선 위
 - 양봉이어야 함 (종가 > 시가)
-- 주가 1000원 이상만 거래
-- 거래량 100만개 이상
-- 꼬리가 너무 길 경우 매수하지 않음 (봉 꼬리가 현재가 대비 10% 이상)
+- 주가 1000원 이하 제외
+- 주가 30만원 이상 제외
+- 거래량 80만개 이상
+- 상한가 제외
+- 위꼬리가 너무 길 경우 매수하지 않음 (고가 대비 종가가 10% 이상 차이)
 - 종가 배팅 (3시 15분에 매수)
-- 거래량 재증가 시 매도 (당일 거래량 > 매수일 거래량)
-- 전일 시가 이탈 시 매도 (종가 < 전일 시가)
-- 고정 손절 -7%
+- 3 영업일 안에 청산
+- 매수일 거래량의 60% 이상의 거래량이 나오면 3 영업일을 연장
+- 장 마감 전에 매도 (종가 기준)
 """
 import sys
 sys.path.append('..')
@@ -26,38 +28,45 @@ class BalloonTheoryStrategy(Strategy):
     풍선이론 전략
 
     매수 조건:
-    1. 당일 거래량이 전일 거래량 대비 400% 이상 증가
-    2. 5% 이상 상승
-    3. 종가 기준 EMA 60일선 위
+    1. 당일 거래량이 전일 거래량 대비 400% 이상, 1200% 이하 증가
+    2. 4% 이상 상승
+    3. EMA 60일선 위
     4. 양봉이어야 함 (종가 > 시가)
-    5. 주가가 1000원 이상
-    6. 거래량이 100만개 이상
-    7. 꼬리가 너무 길지 않음 (하단 꼬리가 종가 대비 10% 미만)
+    5. 거래량이 80만개 이상
+    6. 위꼬리가 너무 길지 않음 (고가 대비 종가가 10% 이상 차이나지 않음)
+
+    매수 제외 조건:
+    1. 주가 1000원 이하
+    2. 주가 30만원 이상
+    3. 상한가
 
     매도 조건:
-    1. 거래량 재증가: 당일 거래량 > 매수일 거래량
-    2. 전일 시가 이탈: 종가 < 매수일 전일 시가
-    3. 고정 손절: 매수가 대비 -7% 이상 손실
+    1. 기본 3 영업일 후 청산
+    2. 매수일 거래량의 60% 이상 거래량이 나오면 그 시점에서 3 영업일 연장 (무제한 반복)
     """
 
     # 파라미터 설정
-    min_price = 1000           # 최소 거래 가격
-    min_gain_pct = 0.05        # 최소 상승률 (5%)
-    volume_multiplier = 4.0    # 거래량 증가율 (400%)
-    min_volume = 1000000       # 최소 거래량 (100만개)
-    max_tail_ratio = 0.10      # 최대 꼬리 비율 (10%)
-    ema_period = 60            # EMA 기간 (60일)
-    stop_loss_pct = 0.07       # 고정 손절 비율 (7%)
+    min_price = 1000                # 최소 거래 가격
+    max_price = 300000              # 최대 거래 가격 (30만원)
+    min_gain_pct = 0.04             # 최소 상승률 (4%)
+    volume_multiplier_min = 4.0     # 거래량 증가율 최소 (400%)
+    volume_multiplier_max = 12.0    # 거래량 증가율 최대 (1200%)
+    min_volume = 800000             # 최소 거래량 (80만개)
+    max_upper_tail_ratio = 0.10     # 최대 위꼬리 비율 (고가 대비 10%)
+    ema_period = 60                 # EMA 기간 (60일)
+    price_limit_pct = 0.30          # 상한가 비율 (30%)
+    base_hold_days = 3              # 기본 보유 기간 (3 영업일)
+    volume_extension_ratio = 0.6    # 거래량 연장 조건 (60%)
 
     def init(self):
         """전략 초기화"""
         # EMA 60일선 계산
-        self.ema60 = self.I(lambda x: pd.Series(x).ewm(span=self.ema_period, adjust=False).mean(), self.data.Close)
+        self.ema = self.I(lambda x: pd.Series(x).ewm(span=self.ema_period, adjust=False).mean(), self.data.Close)
 
         # 진입 시 정보 저장 (매도 기준용)
-        self.entry_price = None      # 매수 가격 (고정 손절 기준)
-        self.entry_prev_open = None  # 매수일 전일 시가 (전일 시가 이탈 청산 기준)
-        self.entry_volume = None     # 매수일 거래량 (거래량 재증가 청산 기준)
+        self.entry_volume = None      # 매수일 거래량 (연장 조건 판단용)
+        self.entry_day_count = None   # 매수 후 경과 영업일 수
+        self.hold_days_limit = None   # 청산 기한 (기본 3일, 거래량 유지 시 계속 연장)
 
     def next(self):
         """매 봉마다 실행되는 매매 로직"""
@@ -75,7 +84,7 @@ class BalloonTheoryStrategy(Strategy):
 
         # 현재 포지션이 있으면 매도 조건 체크
         if self.position:
-            self._check_sell_signal(close, volume, prev_volume)
+            self._check_sell_signal(volume)
             return
 
         # 포지션이 없으면 매수 조건 체크
@@ -86,88 +95,84 @@ class BalloonTheoryStrategy(Strategy):
         매수 시그널 체크
 
         조건:
-        1. 당일 거래량이 전일 거래량 대비 400% 이상 증가
-        2. 5% 이상 상승
-        3. 종가 기준 EMA 60일선 위
+        1. 당일 거래량이 전일 거래량 대비 400% 이상, 1200% 이하 증가
+        2. 4% 이상 상승
+        3. EMA 60일선 위
         4. 양봉이어야 함 (종가 > 시가)
-        5. 주가가 1000원 이상
-        6. 거래량이 100만개 이상
-        7. 꼬리가 너무 길지 않음 (하단 꼬리가 종가 대비 10% 미만)
+        5. 거래량이 80만개 이상
+        6. 위꼬리가 너무 길지 않음 (고가 대비 종가가 10% 이상 차이나지 않음)
+
+        매수 제외 조건:
+        1. 주가 1000원 이하
+        2. 주가 30만원 이상
+        3. 상한가
         """
-        # 최소 가격 조건 (1000원 이상)
-        if close < self.min_price:
+        # 매수 제외 조건 - 주가 범위 (1000원 초과, 30만원 미만)
+        if close <= self.min_price or close >= self.max_price:
             return
 
         # 양봉 확인 (종가 > 시가)
         if close <= open_price:
             return
 
-        # 5% 이상 상승 확인
+        # 4% 이상 상승 확인
         gain_pct = (close - open_price) / open_price if open_price > 0 else 0
         if gain_pct < self.min_gain_pct:
+            return
+
+        # 상한가 제외 (30% 이상 상승)
+        if gain_pct >= self.price_limit_pct:
             return
 
         # 전일 거래량이 0이면 계산 불가
         if prev_volume == 0:
             return
 
-        # 거래량 증가율 확인 (400% 이상)
+        # 거래량 증가율 확인 (400% 이상, 1200% 이하)
         volume_ratio = volume / prev_volume
-        if volume_ratio < self.volume_multiplier:
+        if volume_ratio < self.volume_multiplier_min or volume_ratio > self.volume_multiplier_max:
             return
 
-        # 거래량 절대값 확인 (100만개 이상)
+        # 거래량 절대값 확인 (80만개 이상)
         if volume < self.min_volume:
             return
 
         # EMA 60일선 위에 있는지 확인
-        if len(self.ema60) > 0 and close <= self.ema60[-1]:
+        if len(self.ema) > 0 and close <= self.ema[-1]:
             return
 
-        # 꼬리 길이 체크 (하단 꼬리가 종가 대비 10% 이상이면 매수 안함)
-        # 하단 꼬리 = 종가 - 저가
-        lower_tail = close - low
-        tail_ratio = lower_tail / close if close > 0 else 0
-        if tail_ratio > self.max_tail_ratio:
+        # 위꼬리 길이 체크 (고가 대비 종가가 10% 이상 차이나면 매수 안함)
+        # 위꼬리 비율 = (고가 - 종가) / 고가
+        upper_tail_ratio = (high - close) / high if high > 0 else 0
+        if upper_tail_ratio > self.max_upper_tail_ratio:
             return
 
         # 모든 조건 만족 시 매수
         self.buy()
-        self.entry_price = close          # 매수 가격 저장 (고정 손절 기준)
-        self.entry_prev_open = prev_open  # 매수일 전일 시가 저장 (전일 시가 이탈 청산 기준)
-        self.entry_volume = volume        # 매수일 거래량 저장 (거래량 재증가 청산 기준)
+        self.entry_volume = volume                  # 매수일 거래량 저장 (연장 조건 판단용)
+        self.entry_day_count = 0                    # 경과 일수 초기화 (매수일은 0일)
+        self.hold_days_limit = self.base_hold_days  # 청산 기한 (기본 3일)
 
-    def _check_sell_signal(self, close, volume, prev_volume):
+    def _check_sell_signal(self, volume):
         """
         매도 시그널 체크
 
         조건:
-        1. 거래량 재증가: 당일 거래량 > 매수일 거래량
-        2. 전일 시가 이탈: 종가 < 매수일 전일 시가
-        3. 고정 손절: 매수가 대비 -7% 이상 손실
+        1. 기본 3 영업일 후 청산
+        2. 매수일 거래량의 60% 이상 거래량이 나오면 그 시점에서 3 영업일 연장 (무제한 반복)
         """
-        # 1. 고정 손절 체크 (-7%)
-        if self.entry_price is not None:
-            loss_pct = (close - self.entry_price) / self.entry_price
-            if loss_pct <= -self.stop_loss_pct:
-                self.position.close()
-                self.entry_price = None
-                self.entry_prev_open = None
-                self.entry_volume = None
-                return
+        # 경과 일수 증가 (매수일은 0일, 다음 날부터 1일, 2일, 3일...)
+        self.entry_day_count += 1
 
-        # 2. 거래량 재증가 체크 (당일 거래량 > 매수일 거래량)
-        if self.entry_volume is not None and volume > self.entry_volume:
-            self.position.close()
-            self.entry_price = None
-            self.entry_prev_open = None
-            self.entry_volume = None
-            return
+        # 거래량이 매수일 거래량의 60% 이상이면 현재 시점에서 +3일 연장
+        if (self.entry_volume is not None and
+            volume >= self.entry_volume * self.volume_extension_ratio):
+            self.hold_days_limit = self.entry_day_count + self.base_hold_days
 
-        # 3. 전일 시가 이탈 체크 (종가 < 매수일 전일 시가)
-        if self.entry_prev_open is not None and close < self.entry_prev_open:
+        # 청산 기한 도달 시 매도
+        if self.entry_day_count >= self.hold_days_limit:
             self.position.close()
-            self.entry_price = None
-            self.entry_prev_open = None
             self.entry_volume = None
+            self.entry_day_count = None
+            self.hold_days_limit = None
             return
