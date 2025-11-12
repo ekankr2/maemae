@@ -1,7 +1,7 @@
 """
 백테스팅 실행 스크립트
 
-풍선이론 (거래량 돌파) 전략 테스트
+이평때리기 전략 테스트
 """
 import sys
 import os
@@ -11,7 +11,7 @@ from datetime import datetime
 from backtesting import Backtest
 import kis_auth as ka
 from data_loader import load_stock_data
-from strategies.balloon_theory_strategy import BalloonTheoryStrategy
+from strategies.ema_bounce_strategy import EmaBounceStrategy
 from examples_llm_stock.volume_rank.volume_rank import volume_rank
 from examples_llm_stock.market_cap.market_cap import market_cap
 
@@ -54,7 +54,7 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
 
         bt = Backtest(
             df,
-            BalloonTheoryStrategy,
+            EmaBounceStrategy,
             cash=cash,
             commission=commission,
             exclusive_orders=True,
@@ -68,17 +68,26 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
         initial_equity = safe_float(equity_curve.iloc[0] if len(equity_curve) > 0 else 0)
         total_trades = int(stats.get('# Trades', 0))
 
+        return_pct = safe_float(stats.get('Return [%]', 0))
+        mdd_pct = safe_float(stats.get('Max. Drawdown [%]', 0))
+
+        # 종합 점수 계산 (Calmar Ratio 변형: 수익률 / abs(MDD))
+        # MDD가 0이면 수익률만 사용
+        if abs(mdd_pct) > 0.01:
+            score = return_pct / abs(mdd_pct)
+        else:
+            score = return_pct if return_pct > 0 else 0
+
         result = {
             "stock_code": stock_code,
             "stock_name": stock_name,
             "success": True,
             "initial_equity": initial_equity,
             "final_equity": safe_float(stats.get('Equity Final [$]', 0)),
-            "return_pct": safe_float(stats.get('Return [%]', 0)),
+            "return_pct": return_pct,
             "total_trades": total_trades,
-            "win_rate_pct": safe_float(stats.get('Win Rate [%]', 0)),
-            "max_drawdown_pct": safe_float(stats.get('Max. Drawdown [%]', 0)),
-            "sharpe_ratio": safe_float(stats.get('Sharpe Ratio', 0))
+            "max_drawdown_pct": mdd_pct,
+            "score": score
         }
 
         # 거래가 있는 종목만 차트 저장
@@ -250,7 +259,7 @@ def main():
     백테스팅 실행 (여러 종목 자동 처리)
     """
     print("=" * 80)
-    print("풍선이론 (Balloon Theory) 전략 백테스팅 - 다중 종목")
+    print("이평때리기 (EMA Bounce) 전략 백테스팅 - 다중 종목")
     print("=" * 80)
 
     # 1. KIS API 인증
@@ -274,8 +283,8 @@ def main():
         stock_dict = dict(list(stock_dict.items())[:150])
 
     # 3. 백테스팅 파라미터
-    start_date = "20220101"
-    end_date = "20231231"
+    start_date = "20200101"
+    end_date = "20241231"
     cash = 10_000_000
     commission = 0.0015
 
@@ -305,7 +314,7 @@ def main():
             # 거래가 있는 종목만 로그 출력
             if result["total_trades"] > 0:
                 trade_count += 1
-                print(f"  [{trade_count}] {stock_code_str} ({display_name}) - 거래 {result['total_trades']}회, 수익률 {result['return_pct']:>8.2f}%, 승률 {result['win_rate_pct']:>6.1f}%")
+                print(f"  [{trade_count}] {stock_code_str} ({display_name}) - 거래 {result['total_trades']}회, 수익률 {result['return_pct']:>8.2f}%, MDD {result['max_drawdown_pct']:>8.2f}%, 점수 {result['score']:>6.2f}")
                 if "chart_path" in result:
                     print(f"      → 차트: {result['chart_path']}")
 
@@ -327,23 +336,32 @@ def main():
 
     if successful_stocks:
         print(f"\n거래 발생 종목 상세 (전체 {len(successful_stocks)}개):")
-        print(f"{'종목명':<12} {'코드':<8} {'거래':<6} {'수익률':<10} {'승률':<8} {'MDD':<10}")
+        print(f"{'종목명':<12} {'코드':<8} {'거래':<6} {'수익률':<10} {'MDD':<10} {'점수':<8}")
         print("-" * 70)
 
-        # 수익률 순으로 정렬
-        successful_stocks.sort(key=lambda x: x.get("return_pct", 0), reverse=True)
+        # 점수 순으로 정렬
+        successful_stocks.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         # 전체 거래 발생 종목 표시
         for r in successful_stocks:
             name = r.get('stock_name', '')[:10] or r['stock_code']
-            print(f"{name:<12} {r['stock_code']:<8} {r['total_trades']:<6} {r['return_pct']:>9.2f}% {r['win_rate_pct']:>7.2f}% {r['max_drawdown_pct']:>9.2f}%")
+            print(f"{name:<12} {r['stock_code']:<8} {r['total_trades']:<6} {r['return_pct']:>9.2f}% {r['max_drawdown_pct']:>9.2f}% {r['score']:>7.2f}")
     
     total_return = ((total_final - total_initial) / total_initial * 100) if total_initial > 0 else 0
-    
+
+    # 연간 수익률 계산 (CAGR - Compound Annual Growth Rate)
+    # 2020-01-01 ~ 2024-12-31 = 5년
+    years = 5
+    if total_initial > 0 and total_final > 0:
+        cagr = (((total_final / total_initial) ** (1 / years)) - 1) * 100
+    else:
+        cagr = 0
+
     print(f"\n전체 포트폴리오:")
     print(f"  총 초기 자본:          {total_initial:>15,.0f} 원")
     print(f"  총 최종 자산:          {total_final:>15,.0f} 원")
     print(f"  총 수익률:            {total_return:>15.2f} %")
+    print(f"  연간 수익률 (CAGR):   {cagr:>15.2f} %")
     print(f"  총 거래 횟수:         {total_trades:>15} 회")
     
     print("\n" + "=" * 80)
