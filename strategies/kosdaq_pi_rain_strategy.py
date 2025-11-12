@@ -16,6 +16,162 @@ import pandas as pd
 import numpy as np
 
 
+# ============================================================
+# 코스닥150레버리지 (233740) - 변동성 돌파 전략
+# ============================================================
+
+def calculate_k_value_for_buy(data: pd.DataFrame, current_idx: int = -1) -> float:
+    """
+    매수용 K값 계산
+
+    Args:
+        data: OHLCV 데이터프레임
+        current_idx: 현재 인덱스 (기본값: -1, 마지막)
+
+    Returns:
+        K값 (0.3 또는 0.4)
+        - 현재가가 60일선 위: 0.3
+        - 현재가가 60일선 아래: 0.4
+    """
+    if len(data) < 60:
+        raise ValueError("Not enough data to calculate 60-day EMA")
+
+    # 60일 EMA 계산
+    ema_60 = data['Close'].ewm(span=60, adjust=False).mean()
+
+    current_close = data.iloc[current_idx]['Close']
+    current_ema_60 = ema_60.iloc[current_idx]
+
+    # 현재가가 60일선 위면 0.3, 아니면 0.4
+    if current_close > current_ema_60:
+        return 0.3
+    else:
+        return 0.4
+
+
+def check_kosdaq150_lev_buy_signal(data: pd.DataFrame, current_idx: int = -1) -> bool:
+    """
+    코스닥150레버리지 매수 신호 확인
+
+    Args:
+        data: OHLCV 데이터프레임
+        current_idx: 현재 인덱스 (기본값: -1, 마지막)
+
+    Returns:
+        매수 신호 여부 (True/False)
+
+    조건:
+        1. 기본 필터: (시가 > 전일 저가) OR (전일 종가 > 10일 이동평균)
+        2. K값 결정: 현재가 기준 60일선 위 = 0.3, 60일선 아래 = 0.4
+        3. 목표가 = 금일 시가 + (전일 고가 - 전일 저가) × K
+        4. 장중 목표가 상향 돌파시 매수
+    """
+    if len(data) < 11:  # 최소 11일 필요 (10일 이평 + 전일 + 금일)
+        return False
+
+    if len(data) < 60:  # 60일 EMA 계산 불가
+        return False
+
+    # 현재 데이터
+    current = data.iloc[current_idx]
+    prev = data.iloc[current_idx - 1]
+
+    # 1. 기본 필터 확인
+    # 조건 A: 시가 > 전일 저가
+    filter_a = current['Open'] > prev['Low']
+
+    # 조건 B: 전일 종가 > 10일 이동평균
+    ma_10 = data['Close'].rolling(window=10).mean()
+    prev_ma_10 = ma_10.iloc[current_idx - 1]
+    filter_b = prev['Close'] > prev_ma_10
+
+    # 기본 필터: A OR B
+    if not (filter_a or filter_b):
+        return False
+
+    # 2. K값 계산
+    k_value = calculate_k_value_for_buy(data, current_idx)
+
+    # 3. 목표가 계산
+    prev_range = prev['High'] - prev['Low']
+    target_price = current['Open'] + (prev_range * k_value)
+
+    # 4. 목표가 돌파 확인 (장중 고가가 목표가 이상)
+    if current['High'] >= target_price:
+        return True
+
+    return False
+
+
+def calculate_k_value_for_sell(data: pd.DataFrame, current_idx: int = -1) -> float:
+    """
+    매도용 K값 계산 (매수와 반대)
+
+    Args:
+        data: OHLCV 데이터프레임
+        current_idx: 현재 인덱스 (기본값: -1, 마지막)
+
+    Returns:
+        K값 (0.3 또는 0.4)
+        - 현재가가 60일선 위: 0.4 (매수는 0.3)
+        - 현재가가 60일선 아래: 0.3 (매수는 0.4)
+    """
+    if len(data) < 60:
+        raise ValueError("Not enough data to calculate 60-day EMA")
+
+    # 60일 EMA 계산
+    ema_60 = data['Close'].ewm(span=60, adjust=False).mean()
+
+    current_close = data.iloc[current_idx]['Close']
+    current_ema_60 = ema_60.iloc[current_idx]
+
+    # 현재가가 60일선 위면 0.4, 아니면 0.3 (매수와 반대)
+    if current_close > current_ema_60:
+        return 0.4
+    else:
+        return 0.3
+
+
+def check_kosdaq150_lev_sell_signal(data: pd.DataFrame, current_idx: int = -1) -> bool:
+    """
+    코스닥150레버리지 매도 신호 확인
+
+    Args:
+        data: OHLCV 데이터프레임
+        current_idx: 현재 인덱스 (기본값: -1, 마지막)
+
+    Returns:
+        매도 신호 여부 (True/False)
+
+    조건:
+        1. K값 결정: 현재가 기준 60일선 위 = 0.4, 60일선 아래 = 0.3 (매수와 반대)
+        2. 목표가 = 금일 시가 - (전일 고가 - 전일 저가) × K
+        3. 장중 목표가 하향 돌파시 매도
+    """
+    if len(data) < 2:  # 최소 2일 필요 (전일 + 금일)
+        return False
+
+    if len(data) < 60:  # 60일 EMA 계산 불가
+        return False
+
+    # 현재 데이터
+    current = data.iloc[current_idx]
+    prev = data.iloc[current_idx - 1]
+
+    # 1. K값 계산 (매수와 반대)
+    k_value = calculate_k_value_for_sell(data, current_idx)
+
+    # 2. 목표가 계산
+    prev_range = prev['High'] - prev['Low']
+    target_price = current['Open'] - (prev_range * k_value)
+
+    # 3. 목표가 하향 돌파 확인 (장중 저가가 목표가 이하)
+    if current['Low'] <= target_price:
+        return True
+
+    return False
+
+
 class KosdaqPiRainStrategy(Strategy):
     """
     코스닥피 레인 포트폴리오 전략
