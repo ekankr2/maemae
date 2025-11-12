@@ -17,28 +17,40 @@ def load_stock_data(
     stock_code: str,
     start_date: str,
     end_date: str,
-    adjusted: bool = True
+    adjusted: bool = True,
+    period: str = "D"
 ) -> pd.DataFrame:
     """
-    KIS API에서 주식 일봉 데이터를 가져와 backtesting.py 형식으로 변환
+    KIS API에서 주식 데이터를 가져와 backtesting.py 형식으로 변환
 
     KIS API는 한 번에 최대 100개 봉만 반환하므로,
-    100일씩 나눠서 여러 번 요청해서 데이터를 이어붙임
+    여러 번 요청해서 데이터를 이어붙임
 
     Args:
         stock_code: 종목 코드 (예: "005930" - 삼성전자)
         start_date: 시작일 (YYYYMMDD 형식, 예: "20230101")
         end_date: 종료일 (YYYYMMDD 형식, 예: "20231231")
         adjusted: True면 수정주가, False면 원주가
+        period: 봉 주기
+            - "D": 일봉 (기본값)
+            - "W": 주봉
+            - "M": 월봉
+            - "Y": 년봉
+            - "1": 1분봉
+            - "5": 5분봉
+            - "10": 10분봉
+            - "30": 30분봉
+            - "60": 60분봉 (1시간봉)
 
     Returns:
         pd.DataFrame: backtesting.py 형식의 DataFrame
-            - Index: 날짜 (datetime)
+            - Index: 날짜/시간 (datetime)
             - Columns: Open, High, Low, Close, Volume
 
     Example:
         >>> ka.auth(svr="prod")  # 먼저 인증 필요
-        >>> df = load_stock_data("005930", "20220101", "20231231")
+        >>> df = load_stock_data("005930", "20220101", "20231231")  # 일봉
+        >>> df_hourly = load_stock_data("005930", "20220101", "20231231", period="60")  # 1시간봉
         >>> print(df.head())
     """
     # KIS API 인증 (아직 인증 안 되어 있으면)
@@ -59,8 +71,13 @@ def load_stock_data(
     current_end = end_dt
 
     while current_end >= start_dt:
-        # 100일 전 날짜 계산 (주말 포함해서 약 140일 = 100 거래일)
-        current_start = max(current_end - timedelta(days=140), start_dt)
+        # 기간 계산 (분봉/시간봉은 더 짧은 기간으로)
+        if period in ["1", "5", "10", "30", "60"]:
+            # 분봉/시간봉: 더 짧은 기간 (약 10일)
+            current_start = max(current_end - timedelta(days=10), start_dt)
+        else:
+            # 일봉/주봉/월봉: 100일 전 날짜 계산 (주말 포함해서 약 140일 = 100 거래일)
+            current_start = max(current_end - timedelta(days=140), start_dt)
 
         # API 호출
         _, df = inquire_daily_itemchartprice(
@@ -69,7 +86,7 @@ def load_stock_data(
             fid_input_iscd=stock_code,
             fid_input_date_1=current_start.strftime("%Y%m%d"),
             fid_input_date_2=current_end.strftime("%Y%m%d"),
-            fid_period_div_code="D",  # D: 일봉
+            fid_period_div_code=period,  # 동적으로 period 설정
             fid_org_adj_prc="0" if adjusted else "1"  # 0: 수정주가, 1: 원주가
         )
 
