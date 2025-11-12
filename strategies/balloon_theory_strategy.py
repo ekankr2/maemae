@@ -9,27 +9,19 @@ class BalloonTheoryStrategy(Strategy):
     min_price = 1500
     max_price = 300000
     min_gain_pct = 0.04
-    volume_multiplier_min = 5.0
-    min_volume = 3000000
+    volume_multiplier_min = 4.0
+    min_volume = 1000000
     max_upper_tail_ratio_entry = 0.06
-    max_upper_tail_ratio_exit = 0.06
-    ema_short_period = 20
-    ema_period = 60
-    ema_long_period = 112
-    min_ema_long_deviation_pct = 0.15
-    sma_exit_period = 25
-    price_limit_pct = 0.22
-    min_market_cap = 120_000_000_000
+    max_upper_tail_ratio_exit = 0.08
+    ema_short_period = 112
+    min_market_cap = 300_000_000_000
 
     def init(self):
         self.ema_short = self.I(lambda x: pd.Series(x).ewm(span=self.ema_short_period, adjust=False).mean(), self.data.Close)
-        self.ema = self.I(lambda x: pd.Series(x).ewm(span=self.ema_period, adjust=False).mean(), self.data.Close)
-        self.ema_long = self.I(lambda x: pd.Series(x).ewm(span=self.ema_long_period, adjust=False).mean(), self.data.Close)
-        self.sma_exit = self.I(lambda x: pd.Series(x).rolling(window=self.sma_exit_period).mean(), self.data.Close)
         self.entry_open_price = None
+        self.entry_close_price = None
         self.entry_volume = None
-        self.entry_close = None
-        self.entry_bar = None
+        self.entry_day_count = 0
 
     def next(self):
         if len(self.data.Close) < 2:
@@ -45,6 +37,7 @@ class BalloonTheoryStrategy(Strategy):
         prev_volume = self.data.Volume[-2]
 
         if self.position:
+            self.entry_day_count += 1
             self._check_sell_signal(close, open_price, high, volume)
             return
 
@@ -59,8 +52,6 @@ class BalloonTheoryStrategy(Strategy):
         gain_pct = (close - open_price) / open_price if open_price > 0 else 0
         if gain_pct < self.min_gain_pct:
             return
-        if gain_pct >= self.price_limit_pct:
-            return
 
         if prev_volume == 0:
             return
@@ -70,78 +61,87 @@ class BalloonTheoryStrategy(Strategy):
         if volume < self.min_volume:
             return
 
-        if len(self.ema_short) > 0 and len(self.ema) > 0:
-            if self.ema_short[-1] < self.ema[-1]:
-                return
-
-        if len(self.ema_long) > 0:
-            ema_long_deviation = (open_price - self.ema_long[-1]) / self.ema_long[-1] if self.ema_long[-1] > 0 else 0
-            if ema_long_deviation >= self.min_ema_long_deviation_pct:
+        # 현재가가 EMA 112일선 위에 있어야 함
+        if len(self.ema_short) > 0:
+            if close <= self.ema_short[-1]:
                 return
 
         upper_tail_ratio = (high - close) / high if high > 0 else 0
         if upper_tail_ratio > self.max_upper_tail_ratio_entry:
             return
 
-        if hasattr(self.data, 'MarketCap') and len(self.data.MarketCap) > 0:
-            if self.data.MarketCap[-1] < self.min_market_cap:
-                return
+        # 시가총액 체크 - MarketCap이 없거나 0이거나 조건 미달이면 제외
+        if not hasattr(self.data, 'MarketCap') or len(self.data.MarketCap) == 0:
+            return
+        if self.data.MarketCap[-1] <= 0 or self.data.MarketCap[-1] < self.min_market_cap:
+            return
 
         self.buy()
         self.entry_open_price = open_price
+        self.entry_close_price = close
         self.entry_volume = volume
-        self.entry_close = close
-        self.entry_bar = len(self.data)
+        self.entry_day_count = 0
 
     def _check_sell_signal(self, close, open_price, high, volume):
+        # Priority 1: 매수일 시가 이탈
         if self.entry_open_price is not None and close < self.entry_open_price:
             self.position.close()
             self.entry_open_price = None
+            self.entry_close_price = None
             self.entry_volume = None
-            self.entry_close = None
-            self.entry_bar = None
+            self.entry_day_count = 0
             return
 
+        # Priority 2: 매수일 거래량 초과
         if self.entry_volume is not None and volume > self.entry_volume:
             self.position.close()
             self.entry_open_price = None
+            self.entry_close_price = None
             self.entry_volume = None
-            self.entry_close = None
-            self.entry_bar = None
+            self.entry_day_count = 0
             return
 
-        if self.entry_bar is not None and len(self.data) == self.entry_bar + 1:
-            if close < open_price:
-                self.position.close()
-                self.entry_open_price = None
-                self.entry_volume = None
-                self.entry_close = None
-                self.entry_bar = None
-                return
-
-        if self.entry_bar is not None and len(self.data) == self.entry_bar + 1:
-            if self.entry_close is not None and close < self.entry_close:
-                self.position.close()
-                self.entry_open_price = None
-                self.entry_volume = None
-                self.entry_close = None
-                self.entry_bar = None
-                return
-
-        if len(self.sma_exit) > 0 and close < self.sma_exit[-1]:
+        # Priority 3: 전일 시가 이탈
+        if len(self.data.Open) >= 2 and close < self.data.Open[-2]:
             self.position.close()
             self.entry_open_price = None
+            self.entry_close_price = None
             self.entry_volume = None
-            self.entry_close = None
-            self.entry_bar = None
+            self.entry_day_count = 0
             return
 
+        # Priority 4: 위꼬리가 너무 긴 양봉 (8% 이상)
         if close > open_price:
             upper_tail_ratio = (high - close) / high if high > 0 else 0
             if upper_tail_ratio > self.max_upper_tail_ratio_exit:
                 self.position.close()
                 self.entry_open_price = None
+                self.entry_close_price = None
                 self.entry_volume = None
-                self.entry_close = None
-                self.entry_bar = None
+                self.entry_day_count = 0
                 return
+
+        # Priority 5: 매수일 바로 다음날 inside bar 음봉
+        if self.entry_day_count == 1 and self.entry_open_price is not None and self.entry_close_price is not None:
+            # 음봉 체크
+            is_bearish = close < open_price
+
+            if is_bearish:
+                # 매수일 몸통 범위
+                entry_body_low = min(self.entry_open_price, self.entry_close_price)
+                entry_body_high = max(self.entry_open_price, self.entry_close_price)
+
+                # 오늘 몸통 범위
+                today_body_low = min(open_price, close)
+                today_body_high = max(open_price, close)
+
+                # Inside bar 체크 (오늘 몸통이 매수일 몸통 안에 완전히 포함)
+                is_inside_bar = (today_body_low >= entry_body_low and today_body_high <= entry_body_high)
+
+                if is_inside_bar:
+                    self.position.close()
+                    self.entry_open_price = None
+                    self.entry_close_price = None
+                    self.entry_volume = None
+                    self.entry_day_count = 0
+                    return

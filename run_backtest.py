@@ -41,7 +41,7 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
             adjusted=True
         )
 
-        if df.empty or len(df) < 60:  # 최소 60일 데이터 필요
+        if df.empty or len(df) < 250:  # 최소 250일 데이터 필요 (EMA 224일선 계산)
             return None
 
         from examples_llm_stock.search_stock_info.search_stock_info import search_stock_info
