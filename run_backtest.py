@@ -6,6 +6,7 @@
 import sys
 import os
 import pandas as pd
+import logging
 from datetime import datetime
 from backtesting import Backtest
 import kis_auth as ka
@@ -13,6 +14,8 @@ from data_loader import load_stock_data
 from strategies.balloon_theory_strategy import BalloonTheoryStrategy
 from examples_llm_stock.volume_rank.volume_rank import volume_rank
 from examples_llm_stock.market_cap.market_cap import market_cap
+
+logging.getLogger('examples_llm_stock.search_stock_info.search_stock_info').setLevel(logging.WARNING)
 
 
 def safe_float(value, default=0.0):
@@ -40,6 +43,14 @@ def run_backtest_single(stock_code, stock_name, start_date, end_date, cash=10_00
 
         if df.empty or len(df) < 60:  # 최소 60일 데이터 필요
             return None
+
+        from examples_llm_stock.search_stock_info.search_stock_info import search_stock_info
+        stock_info = search_stock_info("300", stock_code)
+        if not stock_info.empty and 'lstg_stqt' in stock_info.columns:
+            lstg_stqt = int(stock_info['lstg_stqt'].iloc[0])
+            df['MarketCap'] = lstg_stqt * df['Close']
+        else:
+            df['MarketCap'] = 0
 
         bt = Backtest(
             df,
